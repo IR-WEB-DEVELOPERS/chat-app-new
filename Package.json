@@ -1,0 +1,24 @@
+{
+  "name": "educhat",
+  "version": "1.0.0",
+  "description": "Real-time messaging app with Firebase, WebRTC calls, and group chats",
+  "main": "chat.html",
+  "scripts": {
+    "start": "http-server -p 8080 -c-1 -o chat.html",
+    "dev": "http-server -p 8080 -c-1 --cors",
+    "server": "http-server -p 8080 -c-1",
+    "server:3000": "http-server -p 3000 -c-1"
+  },
+  "keywords": [
+    "chat",
+    "firebase",
+    "webrtc",
+    "real-time",
+    "messaging"
+  ],
+  "author": "Your Name",
+  "license": "ISC",
+  "dependencies": {
+    "http-server": "^14.1.1"
+  }
+}
