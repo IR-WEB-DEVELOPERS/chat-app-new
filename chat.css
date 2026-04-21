@@ -1881,3 +1881,119 @@ body {
         -webkit-flex: 1;
     }
 }
+
+/* ============================================================
+   ATTACH BUTTON
+   ============================================================ */
+.attach-btn {
+    background: none;
+    border: none;
+    padding: 7px;
+    border-radius: 50%;
+    cursor: pointer;
+    font-size: 1.05rem;
+    transition: background 0.15s, transform 0.1s;
+    flex-shrink: 0;
+    color: var(--text-secondary);
+}
+.attach-btn:hover {
+    background: var(--accent-light);
+    transform: rotate(20deg);
+}
+.attach-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    transform: none;
+}
+
+/* ============================================================
+   FILE MESSAGE BUBBLES
+   ============================================================ */
+.file-msg-wrap {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    max-width: 260px;
+}
+
+/* Image preview */
+.file-msg-image {
+    width: 100%;
+    max-width: 240px;
+    max-height: 200px;
+    object-fit: cover;
+    border-radius: 10px;
+    display: block;
+    cursor: pointer;
+    transition: opacity 0.15s;
+}
+.file-msg-image:hover { opacity: 0.9; }
+
+/* Generic file card */
+.file-msg-card {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    background: rgba(255,255,255,0.12);
+    border-radius: 8px;
+    padding: 9px 12px;
+}
+.message.received .file-msg-card {
+    background: var(--bg-main);
+}
+.file-icon {
+    font-size: 1.8rem;
+    flex-shrink: 0;
+}
+.file-msg-info {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+}
+.file-msg-meta {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.file-name {
+    font-size: 0.82rem;
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 180px;
+}
+.file-size {
+    font-size: 0.7rem;
+    opacity: 0.65;
+    flex-shrink: 0;
+}
+
+/* Action buttons */
+.file-msg-actions {
+    display: flex;
+    gap: 6px;
+}
+.file-action-btn {
+    font-size: 0.72rem;
+    font-weight: 600;
+    padding: 4px 10px;
+    border-radius: 999px;
+    text-decoration: none;
+    transition: all 0.15s;
+    border: 1.5px solid currentColor;
+}
+.message.sent .file-action-btn {
+    color: rgba(255,255,255,0.9);
+}
+.message.sent .file-action-btn:hover {
+    background: rgba(255,255,255,0.2);
+}
+.message.received .file-action-btn {
+    color: var(--accent);
+}
+.message.received .file-action-btn:hover {
+    background: var(--accent-light);
+}
