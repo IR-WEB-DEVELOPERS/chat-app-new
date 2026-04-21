@@ -1095,10 +1095,14 @@ function displayMessages(messages) {
         const rawTime = msg.time || msg.timestamp || Date.now();
         const time = rawTime?.toDate ? rawTime.toDate() : new Date(rawTime);
         const timeString = time.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-        
+
+        const bodyHtml = msg.type === 'file' && window.driveShare
+            ? window.driveShare.renderFileMessage(msg, isSent)
+            : `<div class="message-text">${escapeHTML(msg.text)}</div>`;
+
         html += `
             <div class="message ${isSent ? 'sent' : 'received'}">
-                <div class="message-text">${escapeHTML(msg.text)}</div>
+                ${bodyHtml}
                 <div class="message-time">${timeString}</div>
             </div>
         `;
@@ -1657,11 +1661,15 @@ function displayGroupMessages(messages) {
         const rawTime = msg.time || msg.timestamp || Date.now();
         const time = rawTime?.toDate ? rawTime.toDate() : new Date(rawTime);
         const timeString = time.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-        
+
+        const bodyHtml = msg.type === 'file' && window.driveShare
+            ? window.driveShare.renderFileMessage(msg, isSent)
+            : `<div class="message-text">${escapeHTML(msg.text)}</div>`;
+
         html += `
             <div class="message ${isSent ? 'sent' : 'received'}">
                 ${!isSent ? `<div class="message-sender">${escapeHTML(msg.senderName || 'User')}</div>` : ''}
-                <div class="message-text">${escapeHTML(msg.text)}</div>
+                ${bodyHtml}
                 <div class="message-time">${timeString}</div>
             </div>
         `;
@@ -1969,6 +1977,21 @@ const toastManager = {
         return { dismiss };
     }
 };
+
+// Expose simple toast helper for driveFileShare.js
+window._showToast = function(msg, type = 'info') {
+    const icons = { success: '✅', error: '❌', info: 'ℹ️' };
+    toastManager.show({ icon: icons[type] || 'ℹ️', title: msg, body: '', type: 'message', duration: 3500 });
+};
+
+// Init Drive file sharing after GIS loads
+window.addEventListener('load', () => {
+    setTimeout(() => {
+        if (window.driveShare) {
+            window.driveShare.init();
+        }
+    }, 1500); // give GIS script time to load
+});
 
 async function logout() {
     try {
