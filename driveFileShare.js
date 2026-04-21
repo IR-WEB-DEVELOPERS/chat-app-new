@@ -21,6 +21,7 @@ function initDriveAuth() {
     driveTokenClient = google.accounts.oauth2.initTokenClient({
         client_id: DRIVE_CLIENT_ID,
         scope: DRIVE_SCOPE,
+        // No redirect — stays on same page
         callback: (tokenResponse) => {
             if (tokenResponse.error) {
                 console.error('Drive auth error:', tokenResponse.error);
@@ -37,10 +38,19 @@ function initDriveAuth() {
                 uploadFileToDrive(file, ctx);
             }
         },
+        error_callback: (err) => {
+            console.error('Drive token error:', err);
+            // popup_closed = user closed popup, not a real error
+            if (err.type !== 'popup_closed') {
+                showToast('Drive auth failed: ' + err.type, 'error');
+            }
+            pendingUploadFile = null;
+            pendingUploadCtx  = null;
+        }
     });
 }
 
-// ── Request Drive token (silent first, prompt if needed) ───
+// ── Request Drive token ─────────────────────────────────────
 function requestDriveToken(file, ctx) {
     if (!driveTokenClient) {
         initDriveAuth();
@@ -56,8 +66,8 @@ function requestDriveToken(file, ctx) {
         pendingUploadCtx  = null;
         uploadFileToDrive(f, c);
     } else {
-        // Prompt user for consent
-        driveTokenClient.requestAccessToken({ prompt: 'consent' });
+        // '' = no extra prompt if already consented, shows popup only if needed
+        driveTokenClient.requestAccessToken({ prompt: '' });
     }
 }
 
