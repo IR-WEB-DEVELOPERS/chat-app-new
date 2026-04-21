@@ -147,6 +147,7 @@
                 <div class="message-input">
                     <div class="message-input-container">
                         <button class="emoji-toggle" title="Add Emoji">😊</button>
+                        <button class="attach-btn" data-chat="direct" title="Attach file">📎</button>
                         <input type="text" id="msg" placeholder="Type a message...">
                         <button id="sendBtn" class="send-btn">Send</button>
                     </div>
@@ -181,6 +182,7 @@
                 <div class="message-input">
                     <div class="message-input-container">
                         <button class="emoji-toggle" title="Add Emoji">😊</button>
+                        <button class="attach-btn" data-chat="group" title="Attach file">📎</button>
                         <input type="text" id="groupMsg" placeholder="Type a message...">
                         <button id="sendGroupBtn" class="send-btn">Send</button>
                     </div>
@@ -240,6 +242,9 @@
         </div>
     </div>
 
+    <!-- Google Identity Services (for Drive OAuth) -->
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
+
     <!-- Firebase SDKs -->
     <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
@@ -260,6 +265,9 @@
     
     <!-- Emoji Picker -->
     <script src="emojiPicker.js"></script>
+
+    <!-- Google Drive File Sharing -->
+    <script src="driveFileShare.js"></script>
 
     <!-- Debug script -->
     <script>
