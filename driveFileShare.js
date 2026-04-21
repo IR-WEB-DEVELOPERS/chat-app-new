@@ -301,27 +301,52 @@ function setupAttachButtons() {
         input.style.display = 'none';
         input.addEventListener('change', (e) => {
             const file = e.target.files[0];
+            input.value = '';
             if (!file) return;
-            // 25 MB limit
             if (file.size > 25 * 1024 * 1024) {
                 showToast('File too large (max 25 MB)', 'error');
-                input.value = '';
                 return;
             }
-            input.value = '';
-            // Delay: wait for file chooser to fully close before opening OAuth popup
-            setTimeout(() => {
-                requestDriveToken(file, { type: chatType });
-            }, 500);
+            // Token already obtained before file picker opened
+            uploadFileToDrive(file, { type: chatType });
         });
         document.body.appendChild(input);
     });
 
-    // Attach btn click → trigger file input
+    // Attach btn click:
+    // Step 1 — get Drive token (popup opens here, from direct user click = not blocked)
+    // Step 2 — after token received, open file picker
     document.querySelectorAll('.attach-btn').forEach(btn => {
         btn.addEventListener('click', () => {
             const chatType = btn.dataset.chat;
-            document.getElementById(`fileInput-${chatType}`)?.click();
+            if (driveAccessToken) {
+                // Already have token — open file picker directly
+                document.getElementById(`fileInput-${chatType}`)?.click();
+            } else {
+                // Need token first — popup from direct click = browser allows it
+                if (!driveTokenClient) initDriveAuth();
+
+                // Override callback to open file picker after auth
+                driveTokenClient = google.accounts.oauth2.initTokenClient({
+                    client_id: DRIVE_CLIENT_ID,
+                    scope: DRIVE_SCOPE,
+                    callback: (tokenResponse) => {
+                        if (tokenResponse.error) {
+                            showToast('Drive access denied', 'error');
+                            return;
+                        }
+                        driveAccessToken = tokenResponse.access_token;
+                        // Now open file picker — token is ready
+                        document.getElementById(`fileInput-${chatType}`)?.click();
+                    },
+                    error_callback: (err) => {
+                        if (err.type !== 'popup_closed') {
+                            showToast('Drive auth failed', 'error');
+                        }
+                    }
+                });
+                driveTokenClient.requestAccessToken({ prompt: '' });
+            }
         });
     });
 }
