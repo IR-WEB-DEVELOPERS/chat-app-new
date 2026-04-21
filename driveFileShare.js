@@ -308,8 +308,11 @@ function setupAttachButtons() {
                 input.value = '';
                 return;
             }
-            requestDriveToken(file, { type: chatType });
             input.value = '';
+            // Delay: wait for file chooser to fully close before opening OAuth popup
+            setTimeout(() => {
+                requestDriveToken(file, { type: chatType });
+            }, 500);
         });
         document.body.appendChild(input);
     });
