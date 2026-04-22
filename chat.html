@@ -154,11 +154,20 @@
                     </div>
                 </div>
                 <div id="chat" class="chat-messages"></div>
+                <!-- Typing indicator -->
+                <div id="typingIndicator" class="typing-indicator" style="display:none;">
+                    <div class="typing-dots">
+                        <span></span><span></span><span></span>
+                    </div>
+                    <span class="typing-label">typing...</span>
+                </div>
                 <div class="message-input">
                     <div class="message-input-container">
                         <button class="emoji-toggle" title="Add Emoji">😊</button>
                         <button class="attach-btn" data-chat="direct" title="Attach file">📎</button>
                         <textarea id="msg" placeholder="Type a message..." rows="1"></textarea>
+                        <span id="voiceTimer" class="voice-timer" style="display:none;">00:00</span>
+                        <button id="voiceBtn" class="voice-record-btn" title="Voice message" onclick="startVoiceRecording('direct')">🎤</button>
                         <button id="sendBtn" class="send-btn">Send</button>
                     </div>
                 </div>
@@ -189,11 +198,20 @@
                     </div>
                 </div>
                 <div id="groupChat" class="chat-messages"></div>
+                <!-- Typing indicator for group -->
+                <div id="groupTypingIndicator" class="typing-indicator" style="display:none;">
+                    <div class="typing-dots">
+                        <span></span><span></span><span></span>
+                    </div>
+                    <span class="typing-label">Someone is typing...</span>
+                </div>
                 <div class="message-input">
                     <div class="message-input-container">
                         <button class="emoji-toggle" title="Add Emoji">😊</button>
                         <button class="attach-btn" data-chat="group" title="Attach file">📎</button>
                         <textarea id="groupMsg" placeholder="Type a message..." rows="1"></textarea>
+                        <span id="groupVoiceTimer" class="voice-timer" style="display:none;">00:00</span>
+                        <button id="groupVoiceBtn" class="voice-record-btn" title="Voice message" onclick="startVoiceRecording('group')">🎤</button>
                         <button id="sendGroupBtn" class="send-btn">Send</button>
                     </div>
                 </div>
