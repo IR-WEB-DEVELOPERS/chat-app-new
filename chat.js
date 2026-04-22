@@ -703,8 +703,15 @@ function setupEventListeners() {
         sendBtn.addEventListener('click', sendMessage);
     }
     if (msgInput) {
-        msgInput.addEventListener('keypress', (e) => {
-            if (e.key === 'Enter') sendMessage();
+        msgInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendMessage();
+            }
+        });
+        msgInput.addEventListener('input', () => {
+            msgInput.style.height = 'auto';
+            msgInput.style.height = Math.min(msgInput.scrollHeight, 120) + 'px';
         });
     }
 
@@ -715,8 +722,15 @@ function setupEventListeners() {
         sendGroupBtn.addEventListener('click', sendGroupMessage);
     }
     if (groupMsgInput) {
-        groupMsgInput.addEventListener('keypress', (e) => {
-            if (e.key === 'Enter') sendGroupMessage();
+        groupMsgInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendGroupMessage();
+            }
+        });
+        groupMsgInput.addEventListener('input', () => {
+            groupMsgInput.style.height = 'auto';
+            groupMsgInput.style.height = Math.min(groupMsgInput.scrollHeight, 120) + 'px';
         });
     }
 
@@ -785,7 +799,7 @@ function setupEventListeners() {
     document.querySelectorAll('.emoji-toggle').forEach(btn => {
         btn.addEventListener('click', (e) => {
             e.stopPropagation();
-            const input = e.target.closest('.message-input-container')?.querySelector('input');
+            const input = e.target.closest('.message-input-container')?.querySelector('textarea');
             if (input && window.emojiPicker) {
                 window.emojiPicker.toggle(input);
             }
@@ -1085,20 +1099,57 @@ async function loadMessages() {
     }
 }
 
+function getDateLabel(date) {
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const yesterday = new Date(today);
+    yesterday.setDate(today.getDate() - 1);
+    const msgDay = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+
+    if (msgDay.getTime() === today.getTime()) return 'Today';
+    if (msgDay.getTime() === yesterday.getTime()) return 'Yesterday';
+    return date.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+}
+
 function displayMessages(messages) {
     const chatContainer = document.getElementById('chat');
     if (!chatContainer) return;
 
     let html = '';
+    let lastDateLabel = null;
+
     messages.forEach(msg => {
         const isSent = msg.sender === currentUser.uid;
         const rawTime = msg.time || msg.timestamp || Date.now();
         const time = rawTime?.toDate ? rawTime.toDate() : new Date(rawTime);
         const timeString = time.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        const dateLabel = getDateLabel(time);
+
+        if (dateLabel !== lastDateLabel) {
+            html += `<div class="date-separator"><span>${dateLabel}</span></div>`;
+            lastDateLabel = dateLabel;
+        }
+
+        // Call log message
+        if (msg.type === 'call') {
+            const callIcon = msg.callType === 'video' ? '📹' : '📞';
+            const missed = msg.missed ? ' · Missed' : (msg.duration ? ` · ${msg.duration}` : '');
+            const who = isSent ? 'Outgoing call' : 'Incoming call';
+            html += `
+                <div class="message call-log">
+                    <div class="call-log-bubble">
+                        <span class="call-log-icon">${callIcon}</span>
+                        <span class="call-log-label">${who}${missed}</span>
+                        <span class="call-log-time">${timeString}</span>
+                    </div>
+                </div>
+            `;
+            return;
+        }
 
         const bodyHtml = msg.type === 'file' && window.driveShare
             ? window.driveShare.renderFileMessage(msg, isSent)
-            : `<div class="message-text">${escapeHTML(msg.text)}</div>`;
+            : `<div class="message-text">${escapeHTML(msg.text || '').replace(/\n/g, '<br>')}</div>`;
 
         html += `
             <div class="message ${isSent ? 'sent' : 'received'}">
@@ -1132,8 +1183,7 @@ async function sendMessage() {
         });
 
         input.value = '';
-        
-        // Update unread count for recipient
+        input.style.height = 'auto';
         await db.collection('users').doc(chatWithUID).update({
             [`unreadCounts.${chatId}`]: firebase.firestore.FieldValue.increment(1)
         });
@@ -1729,19 +1779,44 @@ function displayGroupMessages(messages) {
     if (!chatContainer) return;
 
     let html = '';
+    let lastDateLabel = null;
+
     messages.forEach(msg => {
         const isSent = msg.sender === currentUser.uid;
         const rawTime = msg.time || msg.timestamp || Date.now();
         const time = rawTime?.toDate ? rawTime.toDate() : new Date(rawTime);
         const timeString = time.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        const dateLabel = getDateLabel(time);
+
+        if (dateLabel !== lastDateLabel) {
+            html += `<div class="date-separator"><span>${dateLabel}</span></div>`;
+            lastDateLabel = dateLabel;
+        }
+
+        // Call log message
+        if (msg.type === 'call') {
+            const callIcon = msg.callType === 'video' ? '📹' : '📞';
+            const missed = msg.missed ? ' · Missed' : (msg.duration ? ` · ${msg.duration}` : '');
+            const who = isSent ? 'Outgoing call' : 'Incoming call';
+            html += `
+                <div class="message call-log">
+                    <div class="call-log-bubble">
+                        <span class="call-log-icon">${callIcon}</span>
+                        <span class="call-log-label">${who}${missed}</span>
+                        <span class="call-log-time">${timeString}</span>
+                    </div>
+                </div>
+            `;
+            return;
+        }
 
         const bodyHtml = msg.type === 'file' && window.driveShare
             ? window.driveShare.renderFileMessage(msg, isSent)
-            : `<div class="message-text">${escapeHTML(msg.text)}</div>`;
+            : `<div class="message-text">${escapeHTML(msg.text || '').replace(/\n/g, '<br>')}</div>`;
 
         html += `
             <div class="message ${isSent ? 'sent' : 'received'}">
-                ${!isSent ? `<div class="message-sender">${escapeHTML(msg.senderName || 'User')}</div>` : ''}
+                ${!isSent && msg.sender !== 'system' ? `<div class="message-sender">${escapeHTML(msg.senderName || 'User')}</div>` : ''}
                 ${bodyHtml}
                 <div class="message-time">${timeString}</div>
             </div>
@@ -1773,6 +1848,7 @@ async function sendGroupMessage() {
         });
 
         input.value = '';
+        input.style.height = 'auto';
 
     } catch (error) {
         console.error('Error sending group message:', error);
