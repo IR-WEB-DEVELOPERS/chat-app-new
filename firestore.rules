@@ -63,7 +63,12 @@ service cloud.firestore {
         (request.auth.uid in resource.data.participants ||
          resource.data.chatId.matches('.*' + request.auth.uid + '.*'));
 
-      allow update, delete: if false;
+      // Allow updates: delete for me/all, seenBy, pinned
+      allow update: if signedIn() &&
+        (request.auth.uid in resource.data.participants ||
+         resource.data.chatId.matches('.*' + request.auth.uid + '.*'));
+
+      allow delete: if false;
     }
 
     match /groups/{groupId} {
@@ -94,7 +99,15 @@ service cloud.firestore {
         groupMemberById(request.resource.data.groupId);
 
       allow read: if groupMemberById(resource.data.groupId);
-      allow update, delete: if false;
+
+      // Allow updates: delete, seenBy, pinned
+      allow update: if signedIn() && groupMemberById(resource.data.groupId);
+      allow delete: if false;
+    }
+
+    // Typing indicators
+    match /typing/{chatId} {
+      allow read, write: if signedIn();
     }
 
     match /calls/{callId} {
