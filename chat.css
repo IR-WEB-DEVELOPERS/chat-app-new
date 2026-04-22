@@ -882,11 +882,11 @@ body.dark .create-group-card {
 
 .message-input-container {
     display: flex;
-    align-items: center;
+    align-items: flex-end;
     gap: 8px;
     background: var(--chat-bg);
     border: 1.5px solid var(--sidebar-border);
-    border-radius: var(--radius-pill);
+    border-radius: 18px;
     padding: 4px 6px 4px 4px;
     transition: border-color 0.15s;
 }
@@ -895,7 +895,7 @@ body.dark .create-group-card {
     border-color: var(--accent);
 }
 
-.message-input-container input {
+.message-input-container textarea {
     flex: 1;
     border: none;
     background: transparent;
@@ -903,9 +903,15 @@ body.dark .create-group-card {
     font-size: 0.9rem;
     color: var(--text-primary);
     outline: none;
+    resize: none;
+    max-height: 120px;
+    overflow-y: auto;
+    line-height: 1.4;
+    font-family: inherit;
+    scrollbar-width: thin;
 }
 
-.message-input-container input::placeholder {
+.message-input-container textarea::placeholder {
     color: var(--text-muted);
 }
 
@@ -1996,4 +2002,70 @@ body {
 }
 .message.received .file-action-btn:hover {
     background: var(--accent-light);
+}
+
+/* ── Date Separator ── */
+.date-separator {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 16px 8px;
+    user-select: none;
+}
+.date-separator::before,
+.date-separator::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--sidebar-border);
+    opacity: 0.5;
+}
+.date-separator span {
+    font-size: 0.72rem;
+    font-weight: 600;
+    color: var(--text-muted);
+    background: var(--chat-bg);
+    padding: 3px 12px;
+    border-radius: 12px;
+    border: 1px solid var(--sidebar-border);
+    white-space: nowrap;
+}
+
+/* ── Call Log Message ── */
+.message.call-log {
+    background: transparent !important;
+    display: flex;
+    justify-content: center;
+    padding: 2px 0;
+    margin: 4px 0;
+    max-width: 100% !important;
+    align-self: center !important;
+}
+.call-log-bubble {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: var(--sidebar-bg);
+    border: 1px solid var(--sidebar-border);
+    border-radius: 16px;
+    padding: 6px 16px;
+    font-size: 0.78rem;
+    color: var(--text-secondary);
+}
+.call-log-icon {
+    font-size: 0.9rem;
+}
+.call-log-label {
+    font-weight: 500;
+}
+.call-log-time {
+    opacity: 0.65;
+    font-size: 0.72rem;
+    margin-left: 4px;
+}
+
+/* ── Multi-line message text preserve newlines ── */
+.message-text {
+    white-space: pre-wrap;
+    word-break: break-word;
 }
