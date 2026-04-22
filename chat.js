@@ -38,6 +38,20 @@ let unsubscribeGroupMessages = null;
 // Reply state
 let replyingTo = null; // { id, text, senderName }
 
+// Typing indicator state
+let typingTimeout = null;
+let unsubscribeTyping = null;
+
+// Pinned messages
+let pinnedMessages = {}; // chatId -> { id, text, senderName }
+
+// Voice recording
+let mediaRecorder = null;
+let audioChunks = [];
+let isRecording = false;
+let recordingTimer = null;
+let recordingSeconds = 0;
+
 // WebRTC Managers
 let webRTCManager = null;
 let signalingManager = null;
@@ -1082,6 +1096,15 @@ async function openChat(friendUID) {
 
     // Mark as read
     markChatAsRead(generateChatId(currentUser.uid, friendUID));
+
+    // Listen for typing
+    listenTypingIndicator();
+
+    // Wire typing input event
+    const msgInput = document.getElementById('msg');
+    if (msgInput) {
+        msgInput.oninput = onTypingInput;
+    }
 }
 
 async function loadMessages() {
@@ -1178,16 +1201,14 @@ function getDateLabel(date) {
 }
 
 function renderMessageActions(msg, isSent) {
-    const now = Date.now();
-    const rawTime = msg.time || msg.timestamp || Date.now();
-    const msgTime = rawTime?.toDate ? rawTime.toDate().getTime() : new Date(rawTime).getTime();
-    const canDelete = isSent && (now - msgTime) < 3 * 60 * 1000; // 3 minutes
     const safeId = escapeAttribute(msg.id || '');
+    const isPinned = msg.pinned;
     return `
         <div class="msg-actions">
             <button class="msg-action-btn" data-action="reply" data-id="${safeId}" title="Reply">↩</button>
             <button class="msg-action-btn" data-action="forward" data-id="${safeId}" title="Forward">↪</button>
-            ${canDelete ? `<button class="msg-action-btn msg-action-delete" data-action="delete" data-id="${safeId}" title="Delete">🗑</button>` : ''}
+            <button class="msg-action-btn" data-action="pin" data-id="${safeId}" title="${isPinned ? 'Unpin' : 'Pin'}">${isPinned ? '📌' : '📍'}</button>
+            <button class="msg-action-btn msg-action-delete" data-action="delete" data-id="${safeId}" title="Delete">🗑</button>
         </div>
     `;
 }
@@ -1202,9 +1223,42 @@ function renderReplyQuote(msg) {
     `;
 }
 
+function renderSeenTicks(msg, isSent) {
+    if (!isSent) return '';
+    const seen = msg.seenBy && msg.seenBy.some(uid => uid !== currentUser.uid);
+    if (seen) {
+        return '<span class="msg-ticks ticks-seen" title="Seen">✓✓</span>';
+    }
+    return '<span class="msg-ticks ticks-delivered" title="Delivered">✓✓</span>';
+}
+
+function renderVoiceMessage(msg, isSent) {
+    const safeUrl = escapeAttribute(msg.audioUrl || '');
+    const dur = msg.audioDuration ? `${Math.floor(msg.audioDuration)}s` : '';
+    return `
+        <div class="voice-msg-bubble">
+            <button class="voice-play-btn" onclick="this.nextElementSibling.paused?this.nextElementSibling.play():this.nextElementSibling.pause();this.textContent=this.nextElementSibling.paused?'▶':'⏸'">▶</button>
+            <audio src="${safeUrl}" style="display:none" onended="this.previousElementSibling.textContent='▶'"></audio>
+            <div class="voice-waveform">
+                <div class="voice-wave-bar"></div><div class="voice-wave-bar"></div><div class="voice-wave-bar"></div>
+                <div class="voice-wave-bar"></div><div class="voice-wave-bar"></div><div class="voice-wave-bar"></div>
+                <div class="voice-wave-bar"></div><div class="voice-wave-bar"></div>
+            </div>
+            <span class="voice-duration">${dur}</span>
+        </div>
+    `;
+}
+
 function displayMessages(messages) {
     const chatContainer = document.getElementById('chat');
     if (!chatContainer) return;
+
+    // Show pinned message banner
+    const pinned = messages.find(m => m.pinned && !m.deletedForAll);
+    renderPinnedBanner(pinned, 'direct');
+
+    // Mark incoming messages as seen
+    markMessagesAsSeen(messages);
 
     let html = '';
     let lastDateLabel = null;
@@ -1249,16 +1303,27 @@ function displayMessages(messages) {
 
         if (msg.deletedFor && msg.deletedFor.includes(currentUser.uid)) return;
 
-        const bodyHtml = msg.type === 'file' && window.driveShare
-            ? window.driveShare.renderFileMessage(msg, isSent)
-            : `<div class="message-text">${escapeHTML(msg.text || '').replace(/\n/g, '<br>')}</div>`;
+        let bodyHtml;
+        if (msg.type === 'voice') {
+            bodyHtml = renderVoiceMessage(msg, isSent);
+        } else if (msg.type === 'file' && window.driveShare) {
+            bodyHtml = window.driveShare.renderFileMessage(msg, isSent);
+        } else {
+            bodyHtml = `<div class="message-text">${escapeHTML(msg.text || '').replace(/\n/g, '<br>')}</div>`;
+        }
+
+        const pinnedBadge = msg.pinned ? '<span class="pinned-badge">📌</span>' : '';
 
         html += `
-            <div class="message ${isSent ? 'sent' : 'received'}" data-id="${escapeAttribute(msg.id || '')}">
+            <div class="message ${isSent ? 'sent' : 'received'}${msg.pinned ? ' is-pinned' : ''}" data-id="${escapeAttribute(msg.id || '')}">
                 ${renderMessageActions(msg, isSent)}
                 ${renderReplyQuote(msg)}
                 ${bodyHtml}
-                <div class="message-time">${timeString}</div>
+                <div class="message-time">
+                    ${pinnedBadge}
+                    ${timeString}
+                    ${renderSeenTicks(msg, isSent)}
+                </div>
             </div>
         `;
     });
@@ -1415,8 +1480,225 @@ function attachMessageActionListeners(container, messages, chatType) {
             if (action === 'reply') await setReply(msg, chatType);
             else if (action === 'forward') showForwardModal(msg);
             else if (action === 'delete') showDeleteMenu(msgId, chatType);
+            else if (action === 'pin') togglePinMessage(msgId, chatType, !msg.pinned);
         });
     });
+}
+
+// ============================================================
+// TYPING INDICATOR
+// ============================================================
+function setTypingIndicator(isTyping) {
+    if (!chatWithUID || !currentUser) return;
+    const chatId = generateChatId(currentUser.uid, chatWithUID);
+    const ref = db.collection('typing').doc(chatId);
+    if (isTyping) {
+        ref.set({ [currentUser.uid]: true }, { merge: true }).catch(() => {});
+    } else {
+        ref.set({ [currentUser.uid]: false }, { merge: true }).catch(() => {});
+    }
+}
+
+function clearTypingIndicator() {
+    if (typingTimeout) clearTimeout(typingTimeout);
+    setTypingIndicator(false);
+}
+
+function listenTypingIndicator() {
+    if (!chatWithUID || !currentUser) return;
+    if (unsubscribeTyping) { unsubscribeTyping(); unsubscribeTyping = null; }
+    const chatId = generateChatId(currentUser.uid, chatWithUID);
+    unsubscribeTyping = db.collection('typing').doc(chatId).onSnapshot(doc => {
+        const data = doc.data() || {};
+        const isPartnerTyping = data[chatWithUID] === true;
+        const el = document.getElementById('typingIndicator');
+        if (el) el.style.display = isPartnerTyping ? 'flex' : 'none';
+    });
+}
+
+function onTypingInput() {
+    setTypingIndicator(true);
+    if (typingTimeout) clearTimeout(typingTimeout);
+    typingTimeout = setTimeout(() => setTypingIndicator(false), 2500);
+}
+
+// ============================================================
+// SEEN / READ RECEIPTS
+// ============================================================
+function markMessagesAsSeen(messages) {
+    if (!chatWithUID || !currentUser) return;
+    const unread = messages.filter(m => m.sender !== currentUser.uid && !(m.seenBy || []).includes(currentUser.uid) && !m.deletedForAll);
+    unread.forEach(msg => {
+        db.collection('messages').doc(msg.id).update({
+            seenBy: firebase.firestore.FieldValue.arrayUnion(currentUser.uid)
+        }).catch(() => {});
+    });
+}
+
+// ============================================================
+// PIN MESSAGES
+// ============================================================
+async function togglePinMessage(msgId, chatType, shouldPin) {
+    const collection = chatType === 'group' ? 'groupMessages' : 'messages';
+    try {
+        // First unpin all in this chat
+        const chatId = chatType === 'group' ? groupChatID : generateChatId(currentUser.uid, chatWithUID);
+        const field = chatType === 'group' ? 'groupId' : 'chatId';
+        const pinned = await db.collection(collection).where(field, '==', chatId).where('pinned', '==', true).get();
+        const batch = db.batch();
+        pinned.forEach(doc => batch.update(doc.ref, { pinned: false }));
+        if (shouldPin) {
+            batch.update(db.collection(collection).doc(msgId), { pinned: true });
+        }
+        await batch.commit();
+        toastManager.show({ icon: shouldPin ? '📌' : '📍', title: shouldPin ? 'Message pinned' : 'Message unpinned', body: '', type: 'info', duration: 2000 });
+    } catch (e) { console.error('Pin error:', e); }
+}
+
+function renderPinnedBanner(pinnedMsg, chatType) {
+    const containerId = chatType === 'group' ? 'groupChat' : 'chat';
+    const bannerId = chatType === 'group' ? 'groupPinnedBanner' : 'directPinnedBanner';
+    
+    let banner = document.getElementById(bannerId);
+    const container = document.getElementById(containerId);
+    if (!container) return;
+
+    const parent = container.parentElement;
+    if (!parent) return;
+
+    if (!pinnedMsg) {
+        if (banner) banner.remove();
+        return;
+    }
+
+    if (!banner) {
+        banner = document.createElement('div');
+        banner.id = bannerId;
+        banner.className = 'pinned-banner';
+        parent.insertBefore(banner, container);
+    }
+
+    const text = pinnedMsg.type === 'voice' ? '🎤 Voice message' : (pinnedMsg.text || '').substring(0, 60);
+    banner.innerHTML = `
+        <span class="pinned-banner-icon">📌</span>
+        <div class="pinned-banner-content">
+            <span class="pinned-banner-label">Pinned Message</span>
+            <span class="pinned-banner-text">${escapeHTML(text)}</span>
+        </div>
+        <button class="pinned-banner-close" onclick="togglePinMessage('${escapeAttribute(pinnedMsg.id)}','${chatType}',false)">✕</button>
+    `;
+}
+
+// ============================================================
+// VOICE MESSAGES
+// ============================================================
+async function startVoiceRecording(chatType) {
+    if (isRecording) {
+        stopVoiceRecording(chatType);
+        return;
+    }
+    try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        mediaRecorder = new MediaRecorder(stream);
+        audioChunks = [];
+        isRecording = true;
+        recordingSeconds = 0;
+
+        mediaRecorder.ondataavailable = e => { if (e.data.size > 0) audioChunks.push(e.data); };
+        mediaRecorder.onstop = async () => {
+            stream.getTracks().forEach(t => t.stop());
+            const blob = new Blob(audioChunks, { type: 'audio/webm' });
+            await uploadAndSendVoice(blob, recordingSeconds, chatType);
+        };
+
+        mediaRecorder.start(100);
+        recordingSeconds = 0;
+
+        // Update UI
+        const btn = document.getElementById(chatType === 'group' ? 'groupVoiceBtn' : 'voiceBtn');
+        if (btn) { btn.classList.add('recording'); btn.title = 'Stop recording'; btn.textContent = '⏹'; }
+
+        const timerEl = document.getElementById(chatType === 'group' ? 'groupVoiceTimer' : 'voiceTimer');
+        if (timerEl) timerEl.style.display = 'inline';
+
+        recordingTimer = setInterval(() => {
+            recordingSeconds++;
+            if (timerEl) timerEl.textContent = `${Math.floor(recordingSeconds/60).toString().padStart(2,'0')}:${(recordingSeconds%60).toString().padStart(2,'0')}`;
+            if (recordingSeconds >= 120) stopVoiceRecording(chatType); // max 2 min
+        }, 1000);
+
+    } catch (e) {
+        console.error('Mic error:', e);
+        modalManager.showModal('Error', 'Microphone access denied. Please allow mic permission.', 'error');
+    }
+}
+
+function stopVoiceRecording(chatType) {
+    if (!isRecording || !mediaRecorder) return;
+    isRecording = false;
+    if (recordingTimer) { clearInterval(recordingTimer); recordingTimer = null; }
+    mediaRecorder.stop();
+
+    const btn = document.getElementById(chatType === 'group' ? 'groupVoiceBtn' : 'voiceBtn');
+    if (btn) { btn.classList.remove('recording'); btn.title = 'Voice message'; btn.textContent = '🎤'; }
+    const timerEl = document.getElementById(chatType === 'group' ? 'groupVoiceTimer' : 'voiceTimer');
+    if (timerEl) { timerEl.style.display = 'none'; timerEl.textContent = '00:00'; }
+}
+
+async function uploadAndSendVoice(blob, duration, chatType) {
+    // Use Firebase Storage if available, otherwise base64 (small files only)
+    try {
+        const storage = firebase.storage ? firebase.storage() : null;
+        let audioUrl = '';
+
+        if (storage) {
+            const fileName = `voice_${currentUser.uid}_${Date.now()}.webm`;
+            const ref = storage.ref(`voice/${fileName}`);
+            await ref.put(blob);
+            audioUrl = await ref.getDownloadURL();
+        } else {
+            // Fallback: base64 (works for small clips, up to ~1MB)
+            audioUrl = await new Promise(res => {
+                const reader = new FileReader();
+                reader.onload = () => res(reader.result);
+                reader.readAsDataURL(blob);
+            });
+        }
+
+        if (chatType === 'group') {
+            await db.collection('groupMessages').add({
+                groupId: groupChatID,
+                sender: currentUser.uid,
+                senderName: currentUserData?.name || 'User',
+                type: 'voice',
+                audioUrl,
+                audioDuration: duration,
+                time: new Date(),
+                delivered: true,
+                seenBy: []
+            });
+            if (replyingTo) cancelReply('groupReplyBar');
+        } else {
+            const chatId = generateChatId(currentUser.uid, chatWithUID);
+            await db.collection('messages').add({
+                chatId,
+                participants: [currentUser.uid, chatWithUID],
+                sender: currentUser.uid,
+                type: 'voice',
+                audioUrl,
+                audioDuration: duration,
+                time: new Date(),
+                delivered: true,
+                seenBy: []
+            });
+            await db.collection('users').doc(chatWithUID).update({
+                [`unreadCounts.${chatId}`]: firebase.firestore.FieldValue.increment(1)
+            });
+        }
+    } catch (e) {
+        console.error('Voice upload error:', e);
+        modalManager.showModal('Error', 'Failed to send voice message', 'error');
+    }
 }
 
 async function sendMessage() {
@@ -1435,7 +1717,9 @@ async function sendMessage() {
             sender: currentUser.uid,
             text,
             time: new Date(),
-            type: 'text'
+            type: 'text',
+            delivered: true,
+            seenBy: []
         };
         if (replyingTo) msgData.replyTo = replyingTo;
 
@@ -1444,6 +1728,7 @@ async function sendMessage() {
         input.value = '';
         input.style.height = 'auto';
         cancelReply('directReplyBar');
+        clearTypingIndicator();
 
         await db.collection('users').doc(chatWithUID).update({
             [`unreadCounts.${chatId}`]: firebase.firestore.FieldValue.increment(1)
@@ -2039,6 +2324,10 @@ function displayGroupMessages(messages) {
     const chatContainer = document.getElementById('groupChat');
     if (!chatContainer) return;
 
+    // Show pinned message banner for groups
+    const pinned = messages.find(m => m.pinned && !m.deletedForAll);
+    renderPinnedBanner(pinned, 'group');
+
     let html = '';
     let lastDateLabel = null;
 
@@ -2082,17 +2371,28 @@ function displayGroupMessages(messages) {
 
         if (msg.deletedFor && msg.deletedFor.includes(currentUser.uid)) return;
 
-        const bodyHtml = msg.type === 'file' && window.driveShare
-            ? window.driveShare.renderFileMessage(msg, isSent)
-            : `<div class="message-text">${escapeHTML(msg.text || '').replace(/\n/g, '<br>')}</div>`;
+        let bodyHtml;
+        if (msg.type === 'voice') {
+            bodyHtml = renderVoiceMessage(msg, isSent);
+        } else if (msg.type === 'file' && window.driveShare) {
+            bodyHtml = window.driveShare.renderFileMessage(msg, isSent);
+        } else {
+            bodyHtml = `<div class="message-text">${escapeHTML(msg.text || '').replace(/\n/g, '<br>')}</div>`;
+        }
+
+        const pinnedBadge = msg.pinned ? '<span class="pinned-badge">📌</span>' : '';
 
         html += `
-            <div class="message ${isSent ? 'sent' : 'received'}" data-id="${escapeAttribute(msg.id || '')}">
+            <div class="message ${isSent ? 'sent' : 'received'}${msg.pinned ? ' is-pinned' : ''}" data-id="${escapeAttribute(msg.id || '')}">
                 ${renderMessageActions(msg, isSent)}
                 ${!isSent && msg.sender !== 'system' ? `<div class="message-sender">${escapeHTML(msg.senderName || 'User')}</div>` : ''}
                 ${renderReplyQuote(msg)}
                 ${bodyHtml}
-                <div class="message-time">${timeString}</div>
+                <div class="message-time">
+                    ${pinnedBadge}
+                    ${timeString}
+                    ${renderSeenTicks(msg, isSent)}
+                </div>
             </div>
         `;
     });
@@ -2117,7 +2417,9 @@ async function sendGroupMessage() {
             senderName,
             text,
             time: new Date(),
-            type: 'text'
+            type: 'text',
+            delivered: true,
+            seenBy: []
         };
         if (replyingTo) msgData.replyTo = replyingTo;
 
