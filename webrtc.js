@@ -13,6 +13,7 @@ class WebRTCManager {
         // FIX: Call duration timer - only starts when connected
         this.callDurationTimer = null;
         this.callDurationStartTime = null;
+        this.callLogSaved = false;
         
         // State management
         this.signalingState = 'stable';
@@ -716,14 +717,15 @@ class WebRTCManager {
     async endCall(sendSignal = true) {
         console.log('📞 Ending call');
 
-        // Save call log to Firestore before cleanup
+        // Save call log — only once, only by the caller
         try {
             const db = window.db;
             const currentUser = window.currentUser;
             const target = this.callTarget;
             const isVideo = this.isVideoCall;
 
-            if (db && currentUser && target) {
+            if (db && currentUser && target && this.isCaller && !this.callLogSaved) {
+                this.callLogSaved = true;
                 let durationStr = null;
                 if (this.callDurationStartTime) {
                     const secs = Math.floor((Date.now() - this.callDurationStartTime) / 1000);
@@ -791,6 +793,7 @@ class WebRTCManager {
             this.callDurationTimer = null;
         }
         this.callDurationStartTime = null;
+        this.callLogSaved = false;
         
         // Remove remote audio element for voice calls
         const remoteAudio = document.getElementById('remoteCallAudio');
