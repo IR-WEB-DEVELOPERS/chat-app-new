@@ -958,12 +958,35 @@ body.dark .create-group-card {
    SEARCH RESULTS
    ============================================================ */
 .search-result {
-    padding: 8px 0;
+    padding: 10px 4px;
     border-bottom: 1px solid var(--sidebar-border);
 }
 
 .search-result:last-child {
     border-bottom: none;
+}
+
+.add-friend-btn {
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    border-radius: 20px;
+    padding: 6px 16px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background 0.15s, transform 0.1s;
+    flex-shrink: 0;
+}
+
+.add-friend-btn:hover {
+    background: var(--accent-hover);
+    transform: scale(1.04);
+}
+
+.add-friend-btn:active {
+    transform: scale(0.97);
 }
 
 /* ============================================================
