@@ -84,7 +84,15 @@ class WebRTCManager {
             
             // Get user media with better error handling
             try {
-                const constraints = isVideoCall ? this.mediaConstraints : { audio: true, video: false };
+                const constraints = isVideoCall ? {
+                    audio: this.mediaConstraints.audio,
+                    video: {
+                        width: { ideal: 640, max: 1280 },
+                        height: { ideal: 480, max: 720 },
+                        frameRate: { ideal: 24, max: 30 }
+                    }
+                } : { audio: true, video: false };
+                
                 console.log('Requesting media with constraints:', constraints);
                 
                 this.localStream = await navigator.mediaDevices.getUserMedia(constraints);
@@ -151,7 +159,14 @@ class WebRTCManager {
 
             // Get user media
             try {
-                const constraints = isVideoCall ? this.mediaConstraints : { audio: true, video: false };
+                const constraints = isVideoCall ? {
+                    audio: this.mediaConstraints.audio,
+                    video: {
+                        width: { ideal: 640, max: 1280 },
+                        height: { ideal: 480, max: 720 },
+                        frameRate: { ideal: 24, max: 30 }
+                    }
+                } : { audio: true, video: false };
                 this.localStream = await navigator.mediaDevices.getUserMedia(constraints);
                 console.log('✅ Media access granted for answer');
             } catch (mediaError) {
@@ -459,18 +474,41 @@ class WebRTCManager {
         
         try {
             const videoTrack = this.localStream.getVideoTracks()[0];
-            if (!videoTrack) return;
+            if (!videoTrack) {
+                console.warn('No video track available');
+                this.showModal('Info', 'No camera available on this device', 'info');
+                return;
+            }
+            
+            // Check available video input devices
+            const devices = await navigator.mediaDevices.enumerateDevices();
+            const videoDevices = devices.filter(device => device.kind === 'videoinput');
+            
+            if (videoDevices.length < 2) {
+                console.warn('Only one camera available on this device');
+                this.showModal('Info', 'Only one camera available on this device', 'info');
+                return;
+            }
+            
+            const currentFacingMode = videoTrack.getSettings().facingMode;
+            const newFacingMode = currentFacingMode === 'user' ? 'environment' : 'user';
             
             const constraints = {
                 video: {
-                    ...this.mediaConstraints.video,
-                    facingMode: videoTrack.getSettings().facingMode === 'user' ? 'environment' : 'user'
+                    width: { ideal: 640 },
+                    height: { ideal: 480 },
+                    frameRate: { ideal: 24 },
+                    facingMode: { exact: newFacingMode }
                 },
                 audio: this.mediaConstraints.audio
             };
             
             const newStream = await navigator.mediaDevices.getUserMedia(constraints);
             const newVideoTrack = newStream.getVideoTracks()[0];
+            
+            if (!newVideoTrack) {
+                throw new Error('Failed to get new video track');
+            }
             
             const sender = this.peerConnection?.getSenders().find(s => 
                 s.track && s.track.kind === 'video'
@@ -480,15 +518,38 @@ class WebRTCManager {
                 await sender.replaceTrack(newVideoTrack);
             }
             
-            this.localStream.getVideoTracks().forEach(track => track.stop());
-            this.localStream.addTrack(newVideoTrack);
-            this.updateLocalVideo();
+            // Stop old video track
+            this.localStream.getVideoTracks().forEach(track => {
+                if (track !== newVideoTrack) {
+                    track.stop();
+                }
+            });
             
+            // Remove old video tracks and add new one
+            this.localStream.getTracks().forEach(track => {
+                if (track.kind === 'video' && track !== newVideoTrack) {
+                    this.localStream.removeTrack(track);
+                }
+            });
+            
+            if (!this.localStream.getVideoTracks().some(t => t === newVideoTrack)) {
+                this.localStream.addTrack(newVideoTrack);
+            }
+            
+            this.updateLocalVideo();
             console.log('✅ Camera switched successfully');
             
         } catch (error) {
             console.error('❌ Error switching camera:', error);
-            this.showModal('Error', 'Failed to switch camera: ' + error.message, 'error');
+            let errorMsg = error.message;
+            
+            if (error.name === 'NotFoundError' || error.name === 'PermissionDenied') {
+                errorMsg = 'Camera not found or permission denied. Make sure you have at least 2 cameras.';
+            } else if (error.name === 'NotAllowedError') {
+                errorMsg = 'Camera permission denied by user';
+            }
+            
+            this.showModal('Camera Switch Failed', errorMsg, 'error');
         }
     }
 
