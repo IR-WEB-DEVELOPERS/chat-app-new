@@ -35,6 +35,9 @@ let isGroupInfoOpen = false;
 let unsubscribeDirectMessages = null;
 let unsubscribeGroupMessages = null;
 
+// Reply state
+let replyingTo = null; // { id, text, senderName }
+
 // WebRTC Managers
 let webRTCManager = null;
 let signalingManager = null;
@@ -923,6 +926,12 @@ function updateUI() {
 // --------------------
 // Chat Functions
 // --------------------
+function statusDotColor(status) {
+    if (status === 'online') return '#22c55e';
+    if (status === 'away')   return '#f59e0b';
+    return '#9ca3af';
+}
+
 async function loadFriendsList() {
     const friendsList = document.getElementById('friendsList');
     if (!friendsList) return;
@@ -935,62 +944,97 @@ async function loadFriendsList() {
             return;
         }
 
-        // Fetch last message time for each friend to sort by latest
+        // Fetch last message for each friend (sort + preview)
         const friendEntries = await Promise.all(friends.map(async (friendUID) => {
             const friendData = await getUserData(friendUID);
             if (!friendData) return null;
             const chatId = generateChatId(currentUser.uid, friendUID);
             let lastTime = 0;
+            let lastPreview = '';
+            let lastTimeStr = '';
             try {
-                const lastMsgSnap = await db.collection('messages')
-                    .where('chatId', '==', chatId)
-                    .orderBy('time', 'desc')
-                    .limit(1)
-                    .get();
-                if (!lastMsgSnap.empty) {
-                    const t = lastMsgSnap.docs[0].data().time;
-                    lastTime = t?.toDate ? t.toDate().getTime() : new Date(t).getTime();
+                let snap;
+                try {
+                    snap = await db.collection('messages')
+                        .where('chatId', '==', chatId)
+                        .orderBy('time', 'desc')
+                        .limit(1)
+                        .get();
+                } catch (indexErr) {
+                    // Fallback: get all and sort client-side
+                    const allSnap = await db.collection('messages')
+                        .where('chatId', '==', chatId)
+                        .get();
+                    const docs = allSnap.docs.sort((a, b) => {
+                        const ta = a.data().time?.toDate?.() || new Date(a.data().time);
+                        const tb = b.data().time?.toDate?.() || new Date(b.data().time);
+                        return tb - ta;
+                    });
+                    snap = { empty: docs.length === 0, docs };
                 }
-            } catch (e) { /* no messages yet */ }
-            return { friendUID, friendData, chatId, lastTime };
+
+                if (!snap.empty) {
+                    const msgData = snap.docs[0].data();
+                    const t = msgData.time;
+                    const tDate = t?.toDate ? t.toDate() : new Date(t);
+                    lastTime = tDate.getTime();
+                    const now = new Date();
+                    const yesterday = new Date(now); yesterday.setDate(now.getDate() - 1);
+                    if (tDate.toDateString() === now.toDateString())
+                        lastTimeStr = tDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                    else if (tDate.toDateString() === yesterday.toDateString())
+                        lastTimeStr = 'Yesterday';
+                    else
+                        lastTimeStr = tDate.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
+
+                    if (msgData.type === 'call') {
+                        lastPreview = msgData.callType === 'video' ? '📹 Video call' : '📞 Voice call';
+                    } else if (msgData.type === 'file') {
+                        lastPreview = '📎 File';
+                    } else if (msgData.deletedForAll) {
+                        lastPreview = '🚫 Message deleted';
+                    } else {
+                        const isMine = msgData.sender === currentUser.uid;
+                        lastPreview = (isMine ? 'You: ' : '') + (msgData.text || '').replace(/\n/g, ' ');
+                    }
+                }
+            } catch (e) { console.log('Last msg fetch error:', e); }
+            return { friendUID, friendData, chatId, lastTime, lastPreview, lastTimeStr };
         }));
 
-        // Sort: friends with latest message first, no-message friends last
-        const sorted = friendEntries
-            .filter(Boolean)
-            .sort((a, b) => b.lastTime - a.lastTime);
+        const sorted = friendEntries.filter(Boolean).sort((a, b) => b.lastTime - a.lastTime);
 
         let html = '';
-        for (const { friendUID, friendData, chatId } of sorted) {
+        for (const { friendUID, friendData, chatId, lastPreview, lastTimeStr } of sorted) {
             const unreadCount = unreadMap[chatId] || 0;
             const safeFriendUID = escapeAttribute(friendUID);
             const safeName = escapeHTML(friendData.name);
-            const statusText = formatStatus(friendData.status, friendData.lastSeen);
             const safeInitial = escapeHTML(friendData.name?.charAt(0)?.toUpperCase() || 'U');
-            const isOnline = friendData.status === 'online';
+            const dotColor = statusDotColor(friendData.status);
+            const safePreview = escapeHTML(lastPreview);
             html += `
                 <button class="chat-item" data-uid="${safeFriendUID}">
-                    <div class="chat-avatar" style="position:relative;">
+                    <div class="chat-avatar">
                         ${safeInitial}
-                        <span style="position:absolute;bottom:0;right:0;width:10px;height:10px;border-radius:50%;background:${isOnline ? '#48bb78' : '#a0aec0'};border:2px solid var(--bg-primary, #fff);"></span>
+                        <span class="status-dot" style="background:${dotColor};"></span>
                     </div>
                     <div class="chat-info">
-                        <h4>${safeName}</h4>
-                        <p style="font-size:0.75rem;">${statusText}</p>
+                        <div class="chat-item-top">
+                            <h4>${safeName}</h4>
+                            ${lastTimeStr ? `<span class="chat-item-time">${escapeHTML(lastTimeStr)}</span>` : ''}
+                        </div>
+                        <div class="chat-item-bottom">
+                            <p class="chat-item-preview">${safePreview}</p>
+                            ${unreadCount > 0 ? `<span class="unread-badge">${unreadCount}</span>` : ''}
+                        </div>
                     </div>
-                    ${unreadCount > 0 ? `<span class="unread-badge">${unreadCount}</span>` : ''}
                 </button>
             `;
         }
 
         friendsList.innerHTML = html;
-
-        // Add click listeners
         friendsList.querySelectorAll('.chat-item').forEach(item => {
-            item.addEventListener('click', () => {
-                const uid = item.dataset.uid;
-                openChat(uid);
-            });
+            item.addEventListener('click', () => openChat(item.dataset.uid));
         });
 
     } catch (error) {
@@ -1133,6 +1177,31 @@ function getDateLabel(date) {
     return date.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
 }
 
+function renderMessageActions(msg, isSent) {
+    const now = Date.now();
+    const rawTime = msg.time || msg.timestamp || Date.now();
+    const msgTime = rawTime?.toDate ? rawTime.toDate().getTime() : new Date(rawTime).getTime();
+    const canDelete = isSent && (now - msgTime) < 3 * 60 * 1000; // 3 minutes
+    const safeId = escapeAttribute(msg.id || '');
+    return `
+        <div class="msg-actions">
+            <button class="msg-action-btn" data-action="reply" data-id="${safeId}" title="Reply">↩</button>
+            <button class="msg-action-btn" data-action="forward" data-id="${safeId}" title="Forward">↪</button>
+            ${canDelete ? `<button class="msg-action-btn msg-action-delete" data-action="delete" data-id="${safeId}" title="Delete">🗑</button>` : ''}
+        </div>
+    `;
+}
+
+function renderReplyQuote(msg) {
+    if (!msg.replyTo) return '';
+    return `
+        <div class="reply-quote">
+            <span class="reply-quote-author">${escapeHTML(msg.replyTo.senderName || 'User')}</span>
+            <span class="reply-quote-text">${escapeHTML((msg.replyTo.text || '').substring(0, 80))}</span>
+        </div>
+    `;
+}
+
 function displayMessages(messages) {
     const chatContainer = document.getElementById('chat');
     if (!chatContainer) return;
@@ -1152,7 +1221,6 @@ function displayMessages(messages) {
             lastDateLabel = dateLabel;
         }
 
-        // Call log message
         if (msg.type === 'call') {
             const callIcon = msg.callType === 'video' ? '📹' : '📞';
             const missed = msg.missed ? ' · Missed' : (msg.duration ? ` · ${msg.duration}` : '');
@@ -1169,12 +1237,26 @@ function displayMessages(messages) {
             return;
         }
 
+        if (msg.deletedForAll) {
+            html += `
+                <div class="message ${isSent ? 'sent' : 'received'} deleted-msg">
+                    <div class="message-text deleted-text">🚫 This message was deleted</div>
+                    <div class="message-time">${timeString}</div>
+                </div>
+            `;
+            return;
+        }
+
+        if (msg.deletedFor && msg.deletedFor.includes(currentUser.uid)) return;
+
         const bodyHtml = msg.type === 'file' && window.driveShare
             ? window.driveShare.renderFileMessage(msg, isSent)
             : `<div class="message-text">${escapeHTML(msg.text || '').replace(/\n/g, '<br>')}</div>`;
 
         html += `
-            <div class="message ${isSent ? 'sent' : 'received'}">
+            <div class="message ${isSent ? 'sent' : 'received'}" data-id="${escapeAttribute(msg.id || '')}">
+                ${renderMessageActions(msg, isSent)}
+                ${renderReplyQuote(msg)}
                 ${bodyHtml}
                 <div class="message-time">${timeString}</div>
             </div>
@@ -1182,6 +1264,159 @@ function displayMessages(messages) {
     });
 
     chatContainer.innerHTML = html;
+    attachMessageActionListeners(chatContainer, messages, 'direct');
+}
+
+async function setReply(msg, chatType) {
+    let senderName = msg.senderName || '';
+    if (!senderName) {
+        if (msg.sender === currentUser.uid) {
+            senderName = currentUserData?.name || 'You';
+        } else {
+            // Try to resolve from cache
+            const ud = await getUserData(msg.sender).catch(() => null);
+            senderName = ud?.name || 'User';
+        }
+    }
+    replyingTo = { id: msg.id, text: msg.text || '', senderName };
+    const inputId = chatType === 'group' ? 'groupMsg' : 'msg';
+    const containerId = chatType === 'group' ? 'groupReplyBar' : 'directReplyBar';
+
+    // Show reply bar above input
+    let bar = document.getElementById(containerId);
+    if (!bar) {
+        const inputArea = document.getElementById(inputId)?.closest('.message-input');
+        if (inputArea) {
+            bar = document.createElement('div');
+            bar.id = containerId;
+            bar.className = 'reply-bar';
+            bar.innerHTML = `
+                <div class="reply-bar-inner">
+                    <span class="reply-bar-icon">↩</span>
+                    <div class="reply-bar-content">
+                        <span class="reply-bar-author">${escapeHTML(replyingTo.senderName)}</span>
+                        <span class="reply-bar-text">${escapeHTML(replyingTo.text.substring(0, 60))}</span>
+                    </div>
+                    <button class="reply-bar-cancel" id="${containerId}Cancel">✕</button>
+                </div>
+            `;
+            inputArea.insertBefore(bar, inputArea.firstChild);
+            document.getElementById(containerId + 'Cancel').onclick = () => cancelReply(containerId);
+        }
+    } else {
+        bar.querySelector('.reply-bar-author').textContent = replyingTo.senderName;
+        bar.querySelector('.reply-bar-text').textContent = replyingTo.text.substring(0, 60);
+        bar.style.display = '';
+    }
+    document.getElementById(inputId)?.focus();
+}
+
+function cancelReply(containerId) {
+    replyingTo = null;
+    const bar = document.getElementById(containerId);
+    if (bar) bar.style.display = 'none';
+}
+
+async function showDeleteMenu(msgId, chatType) {
+    const overlay = document.createElement('div');
+    overlay.className = 'delete-overlay';
+    overlay.innerHTML = `
+        <div class="delete-sheet">
+            <p class="delete-sheet-title">Delete message?</p>
+            <button class="delete-opt delete-for-me">Delete for Me</button>
+            <button class="delete-opt delete-for-all">Delete for Everyone</button>
+            <button class="delete-opt delete-cancel">Cancel</button>
+        </div>
+    `;
+    document.body.appendChild(overlay);
+
+    const collection = chatType === 'group' ? 'groupMessages' : 'messages';
+
+    overlay.querySelector('.delete-for-me').onclick = async () => {
+        try {
+            await db.collection(collection).doc(msgId).update({
+                deletedFor: firebase.firestore.FieldValue.arrayUnion(currentUser.uid)
+            });
+        } catch (e) { console.error(e); }
+        overlay.remove();
+    };
+    overlay.querySelector('.delete-for-all').onclick = async () => {
+        try {
+            await db.collection(collection).doc(msgId).update({ deletedForAll: true });
+        } catch (e) { console.error(e); }
+        overlay.remove();
+    };
+    overlay.querySelector('.delete-cancel').onclick = () => overlay.remove();
+    overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+}
+
+async function showForwardModal(msg) {
+    const friends = currentUserData.friends || [];
+    if (friends.length === 0) {
+        modalManager.showModal('Forward', 'No friends to forward to.', 'info');
+        return;
+    }
+
+    const overlay = document.createElement('div');
+    overlay.className = 'delete-overlay';
+
+    let friendsHtml = '';
+    for (const uid of friends) {
+        const fd = await getUserData(uid);
+        if (fd) {
+            friendsHtml += `<button class="forward-friend-btn" data-uid="${escapeAttribute(uid)}">${escapeHTML(fd.name)}</button>`;
+        }
+    }
+
+    overlay.innerHTML = `
+        <div class="delete-sheet">
+            <p class="delete-sheet-title">Forward to...</p>
+            <div class="forward-list">${friendsHtml}</div>
+            <button class="delete-opt delete-cancel" style="margin-top:8px">Cancel</button>
+        </div>
+    `;
+    document.body.appendChild(overlay);
+
+    overlay.querySelectorAll('.forward-friend-btn').forEach(btn => {
+        btn.onclick = async () => {
+            const toUID = btn.dataset.uid;
+            const chatId = generateChatId(currentUser.uid, toUID);
+            try {
+                await db.collection('messages').add({
+                    chatId,
+                    participants: [currentUser.uid, toUID],
+                    sender: currentUser.uid,
+                    text: msg.text || '',
+                    time: new Date(),
+                    type: msg.type || 'text',
+                    forwarded: true
+                });
+                await db.collection('users').doc(toUID).update({
+                    [`unreadCounts.${chatId}`]: firebase.firestore.FieldValue.increment(1)
+                });
+            } catch (e) { console.error(e); }
+            overlay.remove();
+            toastManager.show({ icon: '↪', title: 'Forwarded', body: `Message forwarded to ${btn.textContent}`, type: 'message', duration: 2500 });
+        };
+    });
+    overlay.querySelector('.delete-cancel').onclick = () => overlay.remove();
+    overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+}
+
+function attachMessageActionListeners(container, messages, chatType) {
+    container.querySelectorAll('.msg-action-btn').forEach(btn => {
+        btn.addEventListener('click', async (e) => {
+            e.stopPropagation();
+            const action = btn.dataset.action;
+            const msgId = btn.dataset.id;
+            const msg = messages.find(m => m.id === msgId);
+            if (!msg) return;
+
+            if (action === 'reply') await setReply(msg, chatType);
+            else if (action === 'forward') showForwardModal(msg);
+            else if (action === 'delete') showDeleteMenu(msgId, chatType);
+        });
+    });
 }
 
 async function sendMessage() {
@@ -1194,18 +1429,22 @@ async function sendMessage() {
 
     try {
         const chatId = generateChatId(currentUser.uid, chatWithUID);
-        
-        await db.collection('messages').add({
+        const msgData = {
             chatId,
             participants: [currentUser.uid, chatWithUID],
             sender: currentUser.uid,
             text,
             time: new Date(),
             type: 'text'
-        });
+        };
+        if (replyingTo) msgData.replyTo = replyingTo;
+
+        await db.collection('messages').add(msgData);
 
         input.value = '';
         input.style.height = 'auto';
+        cancelReply('directReplyBar');
+
         await db.collection('users').doc(chatWithUID).update({
             [`unreadCounts.${chatId}`]: firebase.firestore.FieldValue.increment(1)
         });
@@ -1501,12 +1740,12 @@ async function loadAllFriends() {
                 const safeInitial = escapeHTML(friendData.name?.charAt(0)?.toUpperCase() || 'U');
                 const safeName = escapeHTML(friendData.name);
                 const friendStatusText = formatStatus(friendData.status, friendData.lastSeen);
-                const friendIsOnline = friendData.status === 'online';
+                const friendDotColor = statusDotColor(friendData.status);
                 html += `
                     <div class="friend-item">
-                        <div class="friend-avatar" style="position:relative;">
+                        <div class="friend-avatar">
                             ${safeInitial}
-                            <span style="position:absolute;bottom:0;right:0;width:10px;height:10px;border-radius:50%;background:${friendIsOnline ? '#48bb78' : '#a0aec0'};border:2px solid var(--bg-primary,#fff);"></span>
+                            <span class="status-dot" style="background:${friendDotColor};"></span>
                         </div>
                         <div class="friend-info">
                             <h4>${safeName}</h4>
@@ -1815,7 +2054,6 @@ function displayGroupMessages(messages) {
             lastDateLabel = dateLabel;
         }
 
-        // Call log message
         if (msg.type === 'call') {
             const callIcon = msg.callType === 'video' ? '📹' : '📞';
             const missed = msg.missed ? ' · Missed' : (msg.duration ? ` · ${msg.duration}` : '');
@@ -1832,13 +2070,27 @@ function displayGroupMessages(messages) {
             return;
         }
 
+        if (msg.deletedForAll) {
+            html += `
+                <div class="message ${isSent ? 'sent' : 'received'} deleted-msg">
+                    <div class="message-text deleted-text">🚫 This message was deleted</div>
+                    <div class="message-time">${timeString}</div>
+                </div>
+            `;
+            return;
+        }
+
+        if (msg.deletedFor && msg.deletedFor.includes(currentUser.uid)) return;
+
         const bodyHtml = msg.type === 'file' && window.driveShare
             ? window.driveShare.renderFileMessage(msg, isSent)
             : `<div class="message-text">${escapeHTML(msg.text || '').replace(/\n/g, '<br>')}</div>`;
 
         html += `
-            <div class="message ${isSent ? 'sent' : 'received'}">
+            <div class="message ${isSent ? 'sent' : 'received'}" data-id="${escapeAttribute(msg.id || '')}">
+                ${renderMessageActions(msg, isSent)}
                 ${!isSent && msg.sender !== 'system' ? `<div class="message-sender">${escapeHTML(msg.senderName || 'User')}</div>` : ''}
+                ${renderReplyQuote(msg)}
                 ${bodyHtml}
                 <div class="message-time">${timeString}</div>
             </div>
@@ -1846,6 +2098,7 @@ function displayGroupMessages(messages) {
     });
 
     chatContainer.innerHTML = html;
+    attachMessageActionListeners(chatContainer, messages, 'group');
 }
 
 async function sendGroupMessage() {
@@ -1857,20 +2110,22 @@ async function sendGroupMessage() {
     if (!text || !groupChatID) return;
 
     try {
-        // Get sender name
         const senderName = currentUserData.name || 'User';
-        
-        await db.collection('groupMessages').add({
+        const msgData = {
             groupId: groupChatID,
             sender: currentUser.uid,
-            senderName: senderName,
+            senderName,
             text,
             time: new Date(),
             type: 'text'
-        });
+        };
+        if (replyingTo) msgData.replyTo = replyingTo;
+
+        await db.collection('groupMessages').add(msgData);
 
         input.value = '';
         input.style.height = 'auto';
+        cancelReply('groupReplyBar');
 
     } catch (error) {
         console.error('Error sending group message:', error);
