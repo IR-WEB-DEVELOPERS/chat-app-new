@@ -935,30 +935,52 @@ async function loadFriendsList() {
             return;
         }
 
-        let html = '';
-        for (const friendUID of friends) {
+        // Fetch last message time for each friend to sort by latest
+        const friendEntries = await Promise.all(friends.map(async (friendUID) => {
             const friendData = await getUserData(friendUID);
-            if (friendData) {
-                const unreadCount = unreadMap[generateChatId(currentUser.uid, friendUID)] || 0;
-                const safeFriendUID = escapeAttribute(friendUID);
-                const safeName = escapeHTML(friendData.name);
-                const statusText = formatStatus(friendData.status, friendData.lastSeen);
-                const safeInitial = escapeHTML(friendData.name?.charAt(0)?.toUpperCase() || 'U');
-                const isOnline = friendData.status === 'online';
-                html += `
-                    <button class="chat-item" data-uid="${safeFriendUID}">
-                        <div class="chat-avatar" style="position:relative;">
-                            ${safeInitial}
-                            <span style="position:absolute;bottom:0;right:0;width:10px;height:10px;border-radius:50%;background:${isOnline ? '#48bb78' : '#a0aec0'};border:2px solid var(--bg-primary, #fff);"></span>
-                        </div>
-                        <div class="chat-info">
-                            <h4>${safeName}</h4>
-                            <p style="font-size:0.75rem;">${statusText}</p>
-                        </div>
-                        ${unreadCount > 0 ? `<span class="unread-badge">${unreadCount}</span>` : ''}
-                    </button>
-                `;
-            }
+            if (!friendData) return null;
+            const chatId = generateChatId(currentUser.uid, friendUID);
+            let lastTime = 0;
+            try {
+                const lastMsgSnap = await db.collection('messages')
+                    .where('chatId', '==', chatId)
+                    .orderBy('time', 'desc')
+                    .limit(1)
+                    .get();
+                if (!lastMsgSnap.empty) {
+                    const t = lastMsgSnap.docs[0].data().time;
+                    lastTime = t?.toDate ? t.toDate().getTime() : new Date(t).getTime();
+                }
+            } catch (e) { /* no messages yet */ }
+            return { friendUID, friendData, chatId, lastTime };
+        }));
+
+        // Sort: friends with latest message first, no-message friends last
+        const sorted = friendEntries
+            .filter(Boolean)
+            .sort((a, b) => b.lastTime - a.lastTime);
+
+        let html = '';
+        for (const { friendUID, friendData, chatId } of sorted) {
+            const unreadCount = unreadMap[chatId] || 0;
+            const safeFriendUID = escapeAttribute(friendUID);
+            const safeName = escapeHTML(friendData.name);
+            const statusText = formatStatus(friendData.status, friendData.lastSeen);
+            const safeInitial = escapeHTML(friendData.name?.charAt(0)?.toUpperCase() || 'U');
+            const isOnline = friendData.status === 'online';
+            html += `
+                <button class="chat-item" data-uid="${safeFriendUID}">
+                    <div class="chat-avatar" style="position:relative;">
+                        ${safeInitial}
+                        <span style="position:absolute;bottom:0;right:0;width:10px;height:10px;border-radius:50%;background:${isOnline ? '#48bb78' : '#a0aec0'};border:2px solid var(--bg-primary, #fff);"></span>
+                    </div>
+                    <div class="chat-info">
+                        <h4>${safeName}</h4>
+                        <p style="font-size:0.75rem;">${statusText}</p>
+                    </div>
+                    ${unreadCount > 0 ? `<span class="unread-badge">${unreadCount}</span>` : ''}
+                </button>
+            `;
         }
 
         friendsList.innerHTML = html;
