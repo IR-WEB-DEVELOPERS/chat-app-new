@@ -1158,41 +1158,114 @@ async function searchUsers() {
     }
 
     try {
-        // Search by username or email
-        const snapshot = await db.collection('users')
-            .where('username', '>=', searchTerm)
-            .where('username', '<=', searchTerm + '\uf8ff')
-            .limit(5)
-            .get();
+        resultsDiv.innerHTML = '<div class="no-results">Searching...</div>';
+        let allResults = new Map();
+
+        // Strategy 1: Search by username (case-insensitive) - Check if field exists
+        try {
+            const snapshot1 = await db.collection('users')
+                .where('usernameLower', '>=', searchTerm.toLowerCase())
+                .where('usernameLower', '<=', searchTerm.toLowerCase() + '\uf8ff')
+                .limit(10)
+                .get();
+
+            snapshot1.forEach(doc => {
+                if (doc.id !== currentUser.uid && !allResults.has(doc.id)) {
+                    allResults.set(doc.id, doc.data());
+                }
+            });
+        } catch (err) {
+            console.log('usernameLower index not available, trying original field:', err.message);
+            // Fallback: Try exact username search
+            try {
+                const snapshot1b = await db.collection('users')
+                    .where('username', '>=', searchTerm)
+                    .where('username', '<=', searchTerm + '\uf8ff')
+                    .limit(10)
+                    .get();
+                
+                snapshot1b.forEach(doc => {
+                    if (doc.id !== currentUser.uid && !allResults.has(doc.id)) {
+                        allResults.set(doc.id, doc.data());
+                    }
+                });
+            } catch (err2) {
+                console.log('Fallback search also failed:', err2.message);
+            }
+        }
+
+        // Strategy 2: Search by email (case-insensitive)
+        try {
+            const snapshot2 = await db.collection('users')
+                .where('emailLower', '>=', searchTerm.toLowerCase())
+                .where('emailLower', '<=', searchTerm.toLowerCase() + '\uf8ff')
+                .limit(10)
+                .get();
+
+            snapshot2.forEach(doc => {
+                if (doc.id !== currentUser.uid && !allResults.has(doc.id)) {
+                    allResults.set(doc.id, doc.data());
+                }
+            });
+        } catch (err) {
+            console.log('emailLower search failed:', err.message);
+        }
+
+        // Strategy 3: Client-side search through recently accessed users (lightweight)
+        try {
+            const allUsers = await db.collection('users').limit(50).get();
+            const searchLower = searchTerm.toLowerCase();
+            
+            allUsers.forEach(doc => {
+                const user = doc.data();
+                if (doc.id !== currentUser.uid) {
+                    const username = (user.username || '').toLowerCase();
+                    const name = (user.name || '').toLowerCase();
+                    const email = (user.email || '').toLowerCase();
+                    
+                    if (username.includes(searchLower) || 
+                        name.includes(searchLower) || 
+                        email.includes(searchLower)) {
+                        if (!allResults.has(doc.id)) {
+                            allResults.set(doc.id, user);
+                        }
+                    }
+                }
+            });
+        } catch (err) {
+            console.log('Client-side search failed:', err.message);
+        }
 
         resultsDiv.innerHTML = '';
 
-        if (snapshot.empty) {
+        if (allResults.size === 0) {
             resultsDiv.innerHTML = '<div class="no-results">No users found</div>';
             return;
         }
 
-        snapshot.forEach(doc => {
-            const user = doc.data();
-            if (doc.id !== currentUser.uid) {
-                const div = document.createElement('div');
-                div.className = 'search-result';
-                const safeName = escapeHTML(user.name);
-                const safeUsername = escapeHTML(user.username);
-                const safeUID = escapeAttribute(doc.id);
-                div.innerHTML = `
-                    <div style="display: flex; align-items: center; justify-content: space-between;">
-                        <div>
-                            <strong>${safeName}</strong>
-                            <div style="font-size: 0.8rem; color: #718096;">@${safeUsername}</div>
-                        </div>
-                        <button class="primary-btn add-friend-btn" data-uid="${safeUID}">
-                            Add Friend
-                        </button>
+        // Display results (limit to 10)
+        const idsToDisplay = Array.from(allResults.keys()).slice(0, 10);
+        
+        idsToDisplay.forEach(userId => {
+            const user = allResults.get(userId);
+            const div = document.createElement('div');
+            div.className = 'search-result';
+            const safeName = escapeHTML(user.name || 'Unknown');
+            const safeUsername = escapeHTML(user.username || 'No username');
+            const safeUID = escapeAttribute(userId);
+            
+            div.innerHTML = `
+                <div style="display: flex; align-items: center; justify-content: space-between;">
+                    <div>
+                        <strong>${safeName}</strong>
+                        <div style="font-size: 0.8rem; color: #718096;">@${safeUsername}</div>
                     </div>
-                `;
-                resultsDiv.appendChild(div);
-            }
+                    <button class="primary-btn add-friend-btn" data-uid="${safeUID}">
+                        Add Friend
+                    </button>
+                </div>
+            `;
+            resultsDiv.appendChild(div);
         });
 
         // Add event listeners to add friend buttons
@@ -1205,7 +1278,7 @@ async function searchUsers() {
     } catch (error) {
         console.error('Error searching users:', error);
         if (resultsDiv) {
-            resultsDiv.innerHTML = '<div class="no-results">Error searching users</div>';
+            resultsDiv.innerHTML = '<div class="no-results">Error searching users. Please try again.</div>';
         }
     }
 }
