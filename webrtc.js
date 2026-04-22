@@ -715,6 +715,42 @@ class WebRTCManager {
 
     async endCall(sendSignal = true) {
         console.log('📞 Ending call');
+
+        // Save call log to Firestore before cleanup
+        try {
+            const db = window.db;
+            const currentUser = window.currentUser;
+            const target = this.callTarget;
+            const isVideo = this.isVideoCall;
+
+            if (db && currentUser && target) {
+                let durationStr = null;
+                if (this.callDurationStartTime) {
+                    const secs = Math.floor((Date.now() - this.callDurationStartTime) / 1000);
+                    if (secs >= 1) {
+                        const m = Math.floor(secs / 60);
+                        const s = secs % 60;
+                        durationStr = m > 0 ? `${m}m ${s}s` : `${s}s`;
+                    }
+                }
+                const missed = !this.callDurationStartTime;
+                const chatId = [currentUser.uid, target].sort().join('_');
+
+                await db.collection('messages').add({
+                    chatId,
+                    participants: [currentUser.uid, target],
+                    sender: currentUser.uid,
+                    text: isVideo ? '📹 Video call' : '📞 Voice call',
+                    callType: isVideo ? 'video' : 'voice',
+                    duration: durationStr,
+                    missed,
+                    time: new Date(),
+                    type: 'call'
+                });
+            }
+        } catch (err) {
+            console.error('Error saving call log:', err);
+        }
         
         if (sendSignal && this.currentCallId && window.signalingManager) {
             try {
